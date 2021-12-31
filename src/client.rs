@@ -107,7 +107,7 @@ impl Client {
         let mut args = Map::new();
         args.insert("token".to_string(), Value::String(token));
         args.insert("key".to_string(), Value::String(key));
-        args.insert("data".to_string(), Value::String(data));
+        args.insert("value".to_string(), Value::String(data));
         let req = Request{
             cmd_id: 1,
             args: Value::Object(args)
