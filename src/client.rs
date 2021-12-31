@@ -1,5 +1,5 @@
 
-use std::{collections::HashMap, sync::{Arc, Mutex, atomic::AtomicBool}, time::Duration};
+use std::{collections::HashMap, sync::{Arc, Mutex}};
 
 use futures::{StreamExt, TryStreamExt, channel::mpsc::{self, UnboundedReceiver, UnboundedSender}, future, pin_mut};
 use serde::{Deserialize, Serialize};
@@ -43,7 +43,7 @@ impl Client {
         let queues_clone = self.queues.clone();
         tokio::spawn(async move {
             let broadcast_incoming = incoming.try_for_each(|msg| {
-                println!("{:?}", msg);
+                //println!("{:?}", msg);
                 if msg.is_text() {
                     let json = serde_json::from_str::<Response>(&msg.to_string());
                     if !json.is_ok() {
