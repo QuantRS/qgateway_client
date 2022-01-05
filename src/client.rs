@@ -5,13 +5,13 @@ use futures::{StreamExt, TryStreamExt, channel::mpsc::{self, UnboundedReceiver, 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use once_cell::sync::OnceCell;
+
+static SEND_CHANNEL: OnceCell<UnboundedSender<Message>> = OnceCell::new();
 
 pub struct Client {
     url: url::Url,
     auth_token: String,
-
-    login_success: Arc<Mutex<bool>>,
-    tx: Arc<Mutex<Option<UnboundedSender<Message>>>>,
     queues: Arc<Mutex<HashMap<String, UnboundedSender<String>>>>
 }
 
@@ -20,11 +20,12 @@ impl Client {
         return Client{
             url: url::Url::parse(&url).unwrap(),
             auth_token,
-
-            login_success: Arc::new(Mutex::new(false)),
-            tx: Arc::new(Mutex::new(None)),
             queues: Arc::new(Mutex::new(HashMap::new()))
         };
+    }
+
+    pub async fn close(&mut self) {
+        SEND_CHANNEL.get().unwrap().unbounded_send(Message::Close(None)).unwrap();
     }
 
     pub async fn connection(&mut self) {
@@ -32,14 +33,13 @@ impl Client {
         let (outgoing, incoming) = ws_stream.split();
 
         let (tx, rx) = mpsc::unbounded();
-        *self.tx.clone().lock().unwrap() = Some(tx.clone());
+        SEND_CHANNEL.set(tx.clone()).unwrap();
 
         tx.unbounded_send(Message::Text(serde_json::to_string(&Request{
             cmd_id: 0,
             args: Value::Array(vec![Value::String(self.auth_token.clone())])
         }).unwrap())).unwrap();
 
-        let login_success_clone = self.login_success.clone();
         let queues_clone = self.queues.clone();
         tokio::spawn(async move {
             let broadcast_incoming = incoming.try_for_each(|msg| {
@@ -57,7 +57,7 @@ impl Client {
                     match res.cmd_id {
                         0 => {
                             if res.data.is_boolean() && res.data.as_bool().unwrap() {
-                                *login_success_clone.lock().unwrap() = true;
+                                //_
                             }
                         },
                         2 => {
@@ -97,8 +97,7 @@ impl Client {
             args: Value::Object(args)
         };
 
-        let tx = self.tx.lock().unwrap();
-        tx.as_ref().unwrap().unbounded_send(Message::Text(serde_json::to_string(&req).unwrap())).unwrap();
+        SEND_CHANNEL.get().unwrap().unbounded_send(Message::Text(serde_json::to_string(&req).unwrap())).unwrap();
 
         return rx;
     }
@@ -113,8 +112,7 @@ impl Client {
             args: Value::Object(args)
         };
 
-        let tx = self.tx.lock().unwrap();
-        tx.as_ref().unwrap().unbounded_send(Message::Text(serde_json::to_string(&req).unwrap())).unwrap();
+        SEND_CHANNEL.get().unwrap().unbounded_send(Message::Text(serde_json::to_string(&req).unwrap())).unwrap();
     }
 }
 
