@@ -7,12 +7,11 @@ use serde_json::{Map, Value};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use once_cell::sync::OnceCell;
 
-static SEND_CHANNEL: OnceCell<UnboundedSender<Message>> = OnceCell::new();
-
 pub struct Client {
     url: url::Url,
     auth_token: String,
-    queues: Arc<Mutex<HashMap<String, UnboundedSender<String>>>>
+    queues: Arc<Mutex<HashMap<String, UnboundedSender<String>>>>,
+    send_channel: OnceCell<UnboundedSender<Message>>
 }
 
 impl Client {
@@ -20,30 +19,33 @@ impl Client {
         return Client{
             url: url::Url::parse(&url).unwrap(),
             auth_token,
-            queues: Arc::new(Mutex::new(HashMap::new()))
+            queues: Arc::new(Mutex::new(HashMap::new())),
+            send_channel: OnceCell::new(),
         };
     }
 
     pub async fn close(&mut self) {
-        SEND_CHANNEL.get().unwrap().unbounded_send(Message::Close(None)).unwrap();
+        self.send_channel.get().unwrap().unbounded_send(Message::Close(None)).unwrap();
     }
 
-    pub async fn connection(&mut self) {
+    pub async fn connection(&mut self) -> bool {
         let (ws_stream, _) = connect_async(self.url.clone()).await.expect("Failed to connect");
         let (outgoing, incoming) = ws_stream.split();
 
         let (tx, rx) = mpsc::unbounded();
-        SEND_CHANNEL.set(tx.clone()).unwrap();
+        self.send_channel.set(tx.clone()).unwrap();
 
+        //login
         tx.unbounded_send(Message::Text(serde_json::to_string(&Request{
             cmd_id: 0,
             args: Value::Array(vec![Value::String(self.auth_token.clone())])
         }).unwrap())).unwrap();
 
+        let (wait_login_tx, mut wait_login_rx) = mpsc::unbounded();
+
         let queues_clone = self.queues.clone();
         tokio::spawn(async move {
             let broadcast_incoming = incoming.try_for_each(|msg| {
-                //println!("{:?}", msg);
                 if msg.is_text() {
                     let json = serde_json::from_str::<Response>(&msg.to_string());
                     if !json.is_ok() {
@@ -52,13 +54,15 @@ impl Client {
                         tx.unbounded_send(Message::Close(None)).unwrap();
                         return future::ok(());
                     }
-    
+
                     let res = json.unwrap();
                     match res.cmd_id {
                         0 => {
                             if res.data.is_boolean() && res.data.as_bool().unwrap() {
-                                //_
+                                wait_login_tx.unbounded_send(true).unwrap();
+                                return future::ok(());
                             }
+                            wait_login_tx.unbounded_send(false).unwrap();
                         },
                         2 => {
                             if res.data.is_object() {
@@ -77,11 +81,15 @@ impl Client {
                 }
                 future::ok(())
             });
-        
+
             let receive_from_others = rx.map(Ok).forward(outgoing);
             pin_mut!(broadcast_incoming, receive_from_others);
             future::select(broadcast_incoming, receive_from_others).await;
         });
+
+        let result = wait_login_rx.next().await.unwrap();
+        wait_login_rx.close();
+        result
     }
 
     pub async fn subscribe(&mut self, token: String, keys: Vec<String>) -> UnboundedReceiver<String> {
@@ -97,7 +105,7 @@ impl Client {
             args: Value::Object(args)
         };
 
-        SEND_CHANNEL.get().unwrap().unbounded_send(Message::Text(serde_json::to_string(&req).unwrap())).unwrap();
+        self.send_channel.get().unwrap().unbounded_send(Message::Text(serde_json::to_string(&req).unwrap())).unwrap();
 
         return rx;
     }
@@ -112,7 +120,7 @@ impl Client {
             args: Value::Object(args)
         };
 
-        SEND_CHANNEL.get().unwrap().unbounded_send(Message::Text(serde_json::to_string(&req).unwrap())).unwrap();
+        self.send_channel.get().unwrap().unbounded_send(Message::Text(serde_json::to_string(&req).unwrap())).unwrap();
     }
 }
 
