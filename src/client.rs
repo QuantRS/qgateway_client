@@ -11,7 +11,7 @@ use crate::protocol;
 pub struct Client {
     url: url::Url,
     auth_token: String,
-    queues: Arc<Mutex<HashMap<String, UnboundedSender<Vec<u8>>>>>,
+    queues: Arc<Mutex<HashMap<String, UnboundedSender<(String, Vec<u8>)>>>>,
     send_channel: OnceCell<UnboundedSender<WSMessage>>
 }
 
@@ -85,7 +85,7 @@ impl Client {
 
                                 for (token, queue) in queues_clone.lock().unwrap().iter() {
                                     if callback.get_token().eq(token) {
-                                        queue.unbounded_send(callback.get_data().to_vec()).unwrap();
+                                        queue.unbounded_send((callback.get_key().to_string(), callback.get_data().to_vec())).unwrap();
                                     }
                                 }
                             },
@@ -107,7 +107,7 @@ impl Client {
         result
     }
 
-    pub async fn subscribe(&mut self, token: String, keys: Vec<String>) -> UnboundedReceiver<Vec<u8>> {
+    pub async fn subscribe(&mut self, token: String, keys: Vec<String>) -> UnboundedReceiver<(String, Vec<u8>)> {
         let (tx, rx) = mpsc::unbounded();
         self.queues.clone().lock().unwrap().insert(token.clone(), tx);
 
