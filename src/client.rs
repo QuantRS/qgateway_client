@@ -89,6 +89,10 @@ impl Client {
                                     }
                                 }
                             },
+                            protocol::Commands::MESSAGE_STATUS => {
+                                let status_res = protocol::StatusResponse::parse_from_bytes(res.get_data()).unwrap();
+                                println!("{:?}", status_res);
+                            },
                             _ => {}
                         }
                     }
@@ -133,6 +137,18 @@ impl Client {
         send_req.set_token(token);
         send_req.set_key(key);
         send_req.set_data(data);
+
+        req.set_data(send_req.write_to_bytes().unwrap());
+
+        self.send_channel.get().unwrap().unbounded_send(WSMessage::Binary(req.write_to_bytes().unwrap())).unwrap();
+    }
+
+    pub fn status(&mut self, token: String) {
+        let mut req = protocol::Request::new();
+        req.set_command(protocol::Commands::MESSAGE_STATUS);
+
+        let mut send_req = protocol::SendRequest::new();
+        send_req.set_token(token);
 
         req.set_data(send_req.write_to_bytes().unwrap());
 
