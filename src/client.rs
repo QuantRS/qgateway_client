@@ -2,7 +2,7 @@
 use std::{collections::HashMap, sync::{Arc, Mutex}};
 
 use futures::{StreamExt, TryStreamExt, channel::mpsc::{self, UnboundedReceiver, UnboundedSender}, future, pin_mut};
-use protobuf::Message;
+use protobuf::{Message, EnumOrUnknown};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message as WSMessage};
 use once_cell::sync::OnceCell;
 
@@ -38,12 +38,12 @@ impl Client {
 
         // login
         let mut req = protocol::Request::new();
-        req.set_command(protocol::Commands::LOGIN);
+        req.command = EnumOrUnknown::new(protocol::Commands::LOGIN);
 
         let mut login_req = protocol::LoginRequest::new();
-        login_req.set_token(self.auth_token.clone());
+        login_req.token = self.auth_token.clone();
 
-        req.set_data(login_req.write_to_bytes().unwrap());
+        req.data = login_req.write_to_bytes().unwrap();
 
         tx.unbounded_send(WSMessage::Binary(req.write_to_bytes().unwrap())).unwrap();
 
@@ -63,34 +63,34 @@ impl Client {
                         }
 
                         let res = res.unwrap();
-                        match res.get_command() {
+                        match res.command.enum_value().unwrap() {
                             protocol::Commands::HEARTBEAT => {
                                 // 心跳包
                             },
                             protocol::Commands::LOGIN => {
-                                let login_res = protocol::LoginResponse::parse_from_bytes(res.get_data()).unwrap();
+                                let login_res = protocol::LoginResponse::parse_from_bytes(&res.data).unwrap();
 
-                                if login_res.get_status() {
+                                if login_res.status {
                                     wait_login_tx.unbounded_send(true).unwrap();
                                     return future::ok(());
                                 }
                                 wait_login_tx.unbounded_send(false).unwrap();
                             },
                             protocol::Commands::SUBSCRIBE => {
-                                let subscribe_res = protocol::SubscribeResponse::parse_from_bytes(res.get_data()).unwrap();
+                                let subscribe_res = protocol::SubscribeResponse::parse_from_bytes(&res.data).unwrap();
                                 println!("{:?}", subscribe_res);
                             },
                             protocol::Commands::SUBSCRIBE_CALLBACK => {
-                                let callback = protocol::SubscribeCallback::parse_from_bytes(res.get_data()).unwrap();
+                                let callback = protocol::SubscribeCallback::parse_from_bytes(&res.data).unwrap();
 
                                 for (token, queue) in queues_clone.lock().unwrap().iter() {
-                                    if callback.get_token().eq(token) {
-                                        queue.unbounded_send((callback.get_key().to_string(), callback.get_data().to_vec())).unwrap();
+                                    if callback.token.eq(token) {
+                                        queue.unbounded_send((callback.key.to_string(), callback.data.to_vec())).unwrap();
                                     }
                                 }
                             },
                             protocol::Commands::MESSAGE_STATUS => {
-                                let status_res = protocol::StatusResponse::parse_from_bytes(res.get_data()).unwrap();
+                                let status_res = protocol::StatusResponse::parse_from_bytes(&res.data).unwrap();
                                 println!("{:?}", status_res);
                             },
                             _ => {}
@@ -116,13 +116,13 @@ impl Client {
         self.queues.clone().lock().unwrap().insert(token.clone(), tx);
 
         let mut req = protocol::Request::new();
-        req.set_command(protocol::Commands::SUBSCRIBE);
+        req.command = EnumOrUnknown::new(protocol::Commands::SUBSCRIBE);
 
         let mut sub_req = protocol::SubscribeRequest::new();
-        sub_req.set_token(token);
-        sub_req.mut_keys().extend(keys);
+        sub_req.token = token;
+        sub_req.keys.extend(keys);
 
-        req.set_data(sub_req.write_to_bytes().unwrap());
+        req.data = sub_req.write_to_bytes().unwrap();
 
         self.send_channel.get().unwrap().unbounded_send(WSMessage::Binary(req.write_to_bytes().unwrap())).unwrap();
 
@@ -131,26 +131,26 @@ impl Client {
 
     pub fn send(&mut self, token: String, key: String, data: Vec<u8>) {
         let mut req = protocol::Request::new();
-        req.set_command(protocol::Commands::SEND_MESSAGE);
+        req.command = EnumOrUnknown::new(protocol::Commands::SEND_MESSAGE);
 
         let mut send_req = protocol::SendRequest::new();
-        send_req.set_token(token);
-        send_req.set_key(key);
-        send_req.set_data(data);
+        send_req.token = token;
+        send_req.key = key;
+        send_req.data = data;
 
-        req.set_data(send_req.write_to_bytes().unwrap());
+        req.data = send_req.write_to_bytes().unwrap();
 
         self.send_channel.get().unwrap().unbounded_send(WSMessage::Binary(req.write_to_bytes().unwrap())).unwrap();
     }
 
     pub fn status(&mut self, token: String) {
         let mut req = protocol::Request::new();
-        req.set_command(protocol::Commands::MESSAGE_STATUS);
+        req.command = EnumOrUnknown::new(protocol::Commands::MESSAGE_STATUS);
 
         let mut send_req = protocol::SendRequest::new();
-        send_req.set_token(token);
+        send_req.token = token;
 
-        req.set_data(send_req.write_to_bytes().unwrap());
+        req.data = send_req.write_to_bytes().unwrap();
 
         self.send_channel.get().unwrap().unbounded_send(WSMessage::Binary(req.write_to_bytes().unwrap())).unwrap();
     }
